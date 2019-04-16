@@ -117,7 +117,7 @@ private:
             const math::float3& dir);
 
     static inline void snapLightFrustum(math::float2& s, math::float2& o,
-            uint32_t shadowMapDimension) noexcept;
+            math::mat4f const& Mv, math::float3 worldOrigin, math::float2 shadowMapResolution) noexcept;
 
     static inline void computeFrustumCorners(math::float3* out,
             const math::mat4f& projectionViewInverse) noexcept;
@@ -190,7 +190,7 @@ private:
 
     // set-up in update()
     uint32_t mShadowMapDimension = 0;
-    float mShadowMapResolution = 0.0f;
+    math::float3 mShadowMapResolution = {};     // 1 / effective resolution
     bool mHasVisibleShadows = false;
     backend::PolygonOffset mPolygonOffset{};
 

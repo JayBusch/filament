@@ -104,6 +104,7 @@ void ShadowMap::prepare(DriverApi& driver, SamplerGroup& sb) noexcept {
     // DON'T CHANGE this unless computeLightSpaceMatrix() is updated too.
     // see: computeLightSpaceMatrix()
     mViewport = { 1, 1, dim - 2, dim - 2 };
+    mShadowMapResolution.xy = 1.0f / (dim - 2);
 
     // 16-bits seems enough. TODO: make it an option.
     TextureFormat format = TextureFormat::DEPTH16;
@@ -111,13 +112,13 @@ void ShadowMap::prepare(DriverApi& driver, SamplerGroup& sb) noexcept {
         default:
             // this should not happen
         case TextureFormat::DEPTH16:
-            mShadowMapResolution = 1.0f / (1u << 16u);
+            mShadowMapResolution.z = 1.0f / (1u << 16u);
             break;
         case TextureFormat::DEPTH32F:
             // for 32-bits float assume 24-bits resolution. we shouldn't use that for shadow-maps.
         case TextureFormat::DEPTH24:
         case TextureFormat::DEPTH24_STENCIL8:
-            mShadowMapResolution = 1.0f / (1u << 24u);
+            mShadowMapResolution.z = 1.0f / (1u << 24u);
             break;
     }
 
@@ -282,14 +283,32 @@ void ShadowMap::computeShadowCameraDirectional(
     size_t vertexCount = 8;
     if (params.options.stable) {
         // in stable mode we simply take the shadow receivers volume
-        std::copy_n(wsShadowReceiversVolume.getCorners().data(), 8,
+//        std::copy_n(wsShadowReceiversVolume.getCorners().data(), 8,
+//                mWsClippedShadowReceiverVolume.data());
+
+        // in stable mode we simply take the view volume
+        std::copy_n(wsViewFrustumCorners, 8,
                 mWsClippedShadowReceiverVolume.data());
+
+        float4 boundingSphere = {};
+         for (auto c : wsViewFrustumCorners) {
+             boundingSphere.xyz += c / 8;
+         }
+        for (auto c : wsViewFrustumCorners) {
+            boundingSphere.w = std::max(boundingSphere.w, length(c - boundingSphere.xyz));
+        }
+        Aabb bounds = {boundingSphere.xyz - float3{boundingSphere.w}, boundingSphere.xyz + float3{boundingSphere.w}};
+
+        std::copy_n(bounds.getCorners().data(), 8,
+                mWsClippedShadowReceiverVolume.data());
+
     } else {
         // compute the intersection of the shadow receivers volume with the view volume
         // in world space. This returns a set of points on the convex-hull of the intersection.
         vertexCount = intersectFrustumWithBox(mWsClippedShadowReceiverVolume,
                 camera.frustum, wsViewFrustumCorners, wsShadowReceiversVolume);
     }
+
 
     mHasVisibleShadows = vertexCount >= 2;
     if (mHasVisibleShadows) {
@@ -303,10 +322,7 @@ void ShadowMap::computeShadowCameraDirectional(
          * The light's model matrix contains the light position and direction.
          *
          * For directional lights, we could choose any position; we pick the camera position
-         * so we have a fixed reference -- it really doesn't matter too much.
-         * We could also choose the worldOrigin, which is always fixed, and might be interesting
-         * in stable mode. It's not needed right now, because we don't have to snap the light
-         * frustum to texels.
+         * so we have a fixed reference -- that's "not too far" from the scene.
          */
         const float3 lightPosition = camera.getPosition();
         const mat4f M = mat4f::lookAt(lightPosition, lightPosition + dir, float3{ 0, 1, 0 });
@@ -418,12 +434,16 @@ void ShadowMap::computeShadowCameraDirectional(
         lsLightFrustum.min.xy = bounds.min.xy;
         lsLightFrustum.max.xy = bounds.max.xy;
 
-        // For directional lights, we further constraint the light frustum to the
-        // intersection of the shadow casters & receivers in light-space.
-        // However, since this relies on the 1-texel shadow map border, this wouldn't directly
-        // work if we were storing several shadow maps in a single texture.
-        if (mEngine.debug.shadowmap.focus_shadowcasters) {
-            intersectWithShadowCasters(lsLightFrustum, WLMpMv, wsShadowCastersVolume);
+        if (params.options.stable) {
+            // in stable mode we can't do anything that can change the scaling of the texture
+        } else {
+            // For directional lights, we further constraint the light frustum to the
+            // intersection of the shadow casters & receivers in light-space.
+            // However, since this relies on the 1-texel shadow map border, this wouldn't directly
+            // work if we were storing several shadow maps in a single texture.
+            if (mEngine.debug.shadowmap.focus_shadowcasters) {
+                intersectWithShadowCasters(lsLightFrustum, WLMpMv, wsShadowCastersVolume);
+            }
         }
 
         if (UTILS_UNLIKELY((lsLightFrustum.min.x >= lsLightFrustum.max.x) ||
@@ -440,12 +460,17 @@ void ShadowMap::computeShadowCameraDirectional(
         // compute focus scale and offset
         float2 s = 2.0f / float2(lsLightFrustum.max.xy - lsLightFrustum.min.xy);
         float2 o =   -s * float2(lsLightFrustum.max.xy + lsLightFrustum.min.xy) * 0.5f;
+
+        // Use the world origin as reference point, fixed w.r.t. the camera
+        snapLightFrustum(s, o, Mv, camera.worldOrigin[3].xyz, mShadowMapResolution.xy);
+
         const mat4f F(mat4f::row_major_init {
                  s.x,   0,  0, o.x,
                    0, s.y,  0, o.y,
                    0,   0,  1,   0,
                    0,   0,  0,   1,
         });
+
 
         /*
          * Final shadow map transform
@@ -795,12 +820,22 @@ size_t ShadowMap::intersectFrustumWithBox(
     return vertexCount;
 }
 
-void ShadowMap::snapLightFrustum(float2& s, float2& o, uint32_t shadowMapDimension) noexcept {
-    // This snaps the shadow map bounds to texels -- This can be used to stabilize the shadow-map
-    // when the scene is rendered in world-space and the light frustum is somewhat dependent on the
-    // camera position.
-    const float r = shadowMapDimension * 0.5f;
-    o = ceil(o * r) / r;    // equivalent to o -= fmod(o, 1/r)
+void ShadowMap::snapLightFrustum(float2& s, float2& o,
+        mat4f const& Mv, float3 worldOrigin, float2 shadowMapResolution) noexcept {
+
+    auto fmod = [](float2 x, float2 y) -> float2 {
+        auto mod = [](float x, float y) -> float { return std::fmod(x, y); };
+        return float2{ mod(x[0], y[0]), mod(x[1], y[1]) };
+    };
+
+    // This snaps the shadow map bounds to texels.
+    // The 2.0 comes from Mv having a NDC in the range -1,1 (so a range of 2).
+    const float2 r = 2.0f * shadowMapResolution;
+    o -= fmod(o, r);
+
+    // This offsets the texture coordinates so it has a fixed offset w.r.t the world
+    const float2 lsOrigin = mat4f::project(Mv, worldOrigin).xy * s;
+    o -= fmod(lsOrigin, r);
 }
 
 
@@ -906,10 +941,12 @@ float ShadowMap::texelSizeWorldSpace(const mat3f& worldToShadowTexture) const no
     // orthographic projections. We just need to inverse worldToShadowTexture,
     // which is guaranteed to be orthographic.
     // The two first columns give us the how a texel maps in world-space.
+    const float ures = mShadowMapResolution.x;
+    const float vres = mShadowMapResolution.y;
     const mat3f shadowTextureToWorld(inverse(worldToShadowTexture));
     const float3 Jx = shadowTextureToWorld[0];
     const float3 Jy = shadowTextureToWorld[1];
-    const float s = std::max(length(Jx), length(Jy)) / mShadowMapDimension;
+    const float s = std::max(length(Jx) * ures, length(Jy) * vres);
     return s;
 }
 
@@ -928,9 +965,9 @@ float ShadowMap::texelSizeWorldSpace(const mat4f& Wp, const mat4f& MbMtF) const 
     // It might be better to do this computation in the vertex shader.
     float3 p = {0.5, 0.5, 0.0};
 
-    const float ures = 1.0f / mShadowMapDimension;
-    const float vres = 1.0f / mShadowMapDimension;
-    const float dres = mShadowMapResolution;
+    const float ures = mShadowMapResolution.x;
+    const float vres = mShadowMapResolution.y;
+    const float dres = mShadowMapResolution.z;
 
     constexpr bool JACOBIAN_ESTIMATE = false;
     if (JACOBIAN_ESTIMATE) {
