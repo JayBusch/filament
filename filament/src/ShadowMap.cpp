@@ -414,12 +414,9 @@ void ShadowMap::computeShadowCameraDirectional(
         //   In LiPSM mode, we're using the warped space here.
 
         // disable vectorization here because vertexCount is <= 64, not worth the increased code size.
-        #pragma clang loop vectorize(disable)
-        for (size_t i = 0; i < vertexCount; ++i) {
-            const float3 v = mat4f::project(WLMpMv, mWsClippedShadowReceiverVolume[i]);
-            lsLightFrustum.min.xy = min(lsLightFrustum.min.xy, v.xy);
-            lsLightFrustum.max.xy = max(lsLightFrustum.max.xy, v.xy);
-        }
+        Aabb bounds = compute2DBounds(WLMpMv, mWsClippedShadowReceiverVolume.data(), vertexCount);
+        lsLightFrustum.min.xy = bounds.min.xy;
+        lsLightFrustum.max.xy = bounds.max.xy;
 
         // For directional lights, we further constraint the light frustum to the
         // intersection of the shadow casters & receivers in light-space.
@@ -629,6 +626,18 @@ float2 ShadowMap::computeNearFar(const mat4f& lightView,
     return nearFar;
 }
 
+Aabb ShadowMap::compute2DBounds(const mat4f& lightView,
+        float3 const* wsVertices, size_t count) noexcept {
+    Aabb bounds{};
+    #pragma clang loop vectorize(disable)
+    for (size_t i = 0; i < count; ++i) {
+        const float3 v = mat4f::project(lightView, wsVertices[i]);
+        bounds.min.xy = min(bounds.min.xy, v.xy);
+        bounds.max.xy = max(bounds.max.xy, v.xy);
+    }
+    return bounds;
+}
+
 void ShadowMap::intersectWithShadowCasters(
         Aabb& UTILS_RESTRICT lightFrustum,
         mat4f const& lightView,
@@ -791,7 +800,7 @@ void ShadowMap::snapLightFrustum(float2& s, float2& o, uint32_t shadowMapDimensi
     // when the scene is rendered in world-space and the light frustum is somewhat dependent on the
     // camera position.
     const float r = shadowMapDimension * 0.5f;
-    o = ceil(o * r) / r;
+    o = ceil(o * r) / r;    // equivalent to o -= fmod(o, 1/r)
 }
 
 
