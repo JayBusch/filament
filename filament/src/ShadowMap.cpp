@@ -275,12 +275,73 @@ void ShadowMap::computeShadowCameraDirectional(
         return;
     }
 
+    /*
+     * Compute the light's model matrix
+     * (direction & position)
+     *
+     * The light's model matrix contains the light position and direction.
+     *
+     * For directional lights, we could choose any position; we pick the camera position
+     * so we have a fixed reference -- that's "not too far" from the scene.
+     */
+    const float3 lightPosition = camera.getPosition();
+    const mat4f M = mat4f::lookAt(lightPosition, lightPosition + dir, float3{ 0, 1, 0 });
+    const mat4f Mv = FCamera::rigidTransformInverse(M);
+
     float3 wsViewFrustumCorners[8];
     computeFrustumCorners(wsViewFrustumCorners,
             camera.model * FCamera::inverseProjection(camera.projection));
 
-    // compute the shadow receiver volume of interest
-    size_t vertexCount = 8;
+    // compute the intersection of the shadow receivers volume with the view volume
+    // in world space. This returns a set of points on the convex-hull of the intersection.
+    size_t vertexCount = intersectFrustumWithBox(mWsClippedShadowReceiverVolume,
+            camera.frustum, wsViewFrustumCorners, wsShadowReceiversVolume);
+
+    /*
+     *  compute scene zmax (i.e. Near plane) and zmin (i.e. Far plane) in light space.
+     *  (near/far correspond to max/min because the light looks down the -z axis).
+     *  - The Near plane is set to the shadow casters max z (i.e. closest to the light)
+     *  - The Far plane is set to the closest of the farthest shadow casters and receivers
+     *    i.e.: shadow casters behind the last receivers can't cast any shadows
+     *
+     *  If "depth clamp" is supported, we can further tighten the near plane to the
+     *  shadow receiver.
+     *
+     *  Note: L has no influence here, since we're only interested in z values
+     *        (L is a rotation around z)
+     */
+
+    Aabb lsLightFrustum;
+    const float2 nearFar = computeNearFar(Mv, wsShadowCastersVolume);
+    if (!USE_DEPTH_CLAMP) {
+        // near plane from shadow caster volume
+        lsLightFrustum.max.z = nearFar[0];
+    }
+    for (size_t i = 0; i < vertexCount; ++i) {
+        // far: figure out farthest shadow receivers
+        float3 v = mat4f::project(Mv, mWsClippedShadowReceiverVolume[i]);
+        lsLightFrustum.min.z = std::min(lsLightFrustum.min.z, v.z);
+        if (USE_DEPTH_CLAMP) {
+            // further tighten to the shadow receiver volume
+            lsLightFrustum.max.z = std::max(lsLightFrustum.max.z, v.z);
+        }
+    }
+    if (mEngine.debug.shadowmap.far_uses_shadowcasters) {
+        // far: closest of the farthest shadow casters and receivers
+        lsLightFrustum.min.z = std::max(lsLightFrustum.min.z, nearFar[1]);
+    }
+
+    // near / far planes are specified relative to the direction the eye is looking at
+    // i.e. the -z axis (see: ortho)
+    const float znear = -lsLightFrustum.max.z;
+    const float zfar = -lsLightFrustum.min.z;
+
+    // if znear >= zfar, it means we don't have any shadow caster in front of a shadow receiver
+    if (UTILS_UNLIKELY(znear >= zfar)) {
+        mHasVisibleShadows = false;
+        return;
+    }
+
     if (params.options.stable) {
         // in stable mode we simply take the shadow receivers volume
 //        std::copy_n(wsShadowReceiversVolume.getCorners().data(), 8,
@@ -302,13 +363,8 @@ void ShadowMap::computeShadowCameraDirectional(
         std::copy_n(bounds.getCorners().data(), 8,
                 mWsClippedShadowReceiverVolume.data());
 
-    } else {
-        // compute the intersection of the shadow receivers volume with the view volume
-        // in world space. This returns a set of points on the convex-hull of the intersection.
-        vertexCount = intersectFrustumWithBox(mWsClippedShadowReceiverVolume,
-                camera.frustum, wsViewFrustumCorners, wsShadowReceiversVolume);
+        vertexCount = 8;
     }
-
 
     mHasVisibleShadows = vertexCount >= 2;
     if (mHasVisibleShadows) {
@@ -316,22 +372,24 @@ void ShadowMap::computeShadowCameraDirectional(
         const bool USE_LISPSM = ENABLE_LISPSM && mEngine.debug.shadowmap.lispsm && !params.options.stable;
 
         /*
-         * Compute the light's model matrix
-         * (direction & position)
-         *
-         * The light's model matrix contains the light position and direction.
-         *
-         * For directional lights, we could choose any position; we pick the camera position
-         * so we have a fixed reference -- that's "not too far" from the scene.
+         * Compute the light's projection matrix
+         * (directional/point lights, i.e. projection to use, including znear/zfar clip planes)
          */
-        const float3 lightPosition = camera.getPosition();
-        const mat4f M = mat4f::lookAt(lightPosition, lightPosition + dir, float3{ 0, 1, 0 });
-        const mat4f Mv = FCamera::rigidTransformInverse(M);
 
-        mat4f L; // Rotation matrix in light space
-        if (params.options.stable) {
-            // We can't align the light space and view space in stable mode
-        } else {
+        // The light's projection, ortho for directional lights, perspective otherwise
+        const mat4f Mp = directionalLightFrustum(znear, zfar);
+
+        mat4f MpMv(Mp * Mv);
+
+        /*
+         * Compute warping (optional, improve quality)
+         */
+
+        mat4f LMpMv = MpMv;
+
+        // Compute the LiSPSM warping
+        mat4f W, Wp;
+        if (USE_LISPSM) {
             // Orient the shadow map in the direction of the view vector by constructing a
             // rotation matrix in light space around the z-axis, that aligns the y-axis with the camera's
             // forward vector (V) -- this gives the wrap direction, vp, for LiSPSM.
@@ -340,6 +398,7 @@ void ShadowMap::computeShadowCameraDirectional(
             // If the light and view vector are parallel, this rotation becomes
             // meaningless. Just use identity.
             // (LdotV == (Mv*V).z, because L = {0,0,1} in light-space)
+            mat4f L; // Rotation matrix in light space
             if (UTILS_LIKELY(std::abs(lsCameraFwd.z) < 0.9997f)) { // this is |dot(L, V)|
                 const float3 vp{ normalize(lsCameraFwd.xy), 0 }; // wrap direction in light-space
                 L[0].xyz = cross(vp, float3{ 0, 0, 1 });
@@ -347,71 +406,9 @@ void ShadowMap::computeShadowCameraDirectional(
                 L[2].xyz = { 0, 0, 1 };
                 L = transpose(L);
             }
-        }
 
-        /*
-         * Compute the light's projection matrix
-         * (directional/point lights, i.e. projection to use, including znear/zfar clip planes)
-         */
+            LMpMv = L * MpMv;
 
-        /*
-         *  compute scene zmax (i.e. Near plane) and zmin (i.e. Far plane) in light space.
-         *  (near/far correspond to max/min because the light looks down the -z axis).
-         *  - The Near plane is set to the shadow casters max z (i.e. closest to the light)
-         *  - The Far plane is set to the closest of the farthest shadow casters and receivers
-         *    i.e.: shadow casters behind the last receivers can't cast any shadows
-         *
-         *  If "depth clamp" is supported, we can further tighten the near plane to the
-         *  shadow receiver.
-         *
-         *  Note: L has no influence here, since we're only interested in z values
-         *        (L is a rotation around z)
-         */
-
-        Aabb lsLightFrustum;
-        const float2 nearFar = computeNearFar(Mv, wsShadowCastersVolume);
-        if (!USE_DEPTH_CLAMP) {
-            // near plane from shadow caster volume
-            lsLightFrustum.max.z = nearFar[0];
-        }
-        for (size_t i = 0; i < vertexCount; ++i) {
-            // far: figure out farthest shadow receivers
-            float3 v = mat4f::project(Mv, mWsClippedShadowReceiverVolume[i]);
-            lsLightFrustum.min.z = std::min(lsLightFrustum.min.z, v.z);
-            if (USE_DEPTH_CLAMP) {
-                // further tighten to the shadow receiver volume
-                lsLightFrustum.max.z = std::max(lsLightFrustum.max.z, v.z);
-            }
-        }
-        if (mEngine.debug.shadowmap.far_uses_shadowcasters) {
-            // far: closest of the farthest shadow casters and receivers
-            lsLightFrustum.min.z = std::max(lsLightFrustum.min.z, nearFar[1]);
-        }
-
-        // near / far planes are specified relative to the direction the eye is looking at
-        // i.e. the -z axis (see: ortho)
-        const float znear = -lsLightFrustum.max.z;
-        const float zfar = -lsLightFrustum.min.z;
-
-        // if znear >= zfar, it means we don't have any shadow caster in front of a shadow receiver
-        if (UTILS_UNLIKELY(znear >= zfar)) {
-            mHasVisibleShadows = false;
-            return;
-        }
-
-        // The light's projection, ortho for directional lights, perspective otherwise
-        const mat4f Mp = directionalLightFrustum(znear, zfar);
-
-        /*
-         * Compute warping (optional, improve quality)
-         */
-
-        // lights space matrix used for finding the near and far planes
-        const mat4f LMpMv(L * Mp * Mv);
-
-        // Compute the LiSPSM warping
-        mat4f W, Wp;
-        if (USE_LISPSM) {
             W = applyLISPSM(Wp, camera, params, LMpMv,
                     mWsClippedShadowReceiverVolume, vertexCount, dir);
         }
