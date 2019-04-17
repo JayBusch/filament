@@ -342,28 +342,21 @@ void ShadowMap::computeShadowCameraDirectional(
         return;
     }
 
+    float4 viewVolumeBoundingSphere = {};
     if (params.options.stable) {
         // in stable mode we simply take the shadow receivers volume
 //        std::copy_n(wsShadowReceiversVolume.getCorners().data(), 8,
 //                mWsClippedShadowReceiverVolume.data());
-
-        // in stable mode we simply take the view volume
-        std::copy_n(wsViewFrustumCorners, 8,
-                mWsClippedShadowReceiverVolume.data());
-
-        float4 boundingSphere = {};
-         for (auto c : wsViewFrustumCorners) {
-             boundingSphere.xyz += c / 8;
-         }
+        // in stable mode we simply take the view volume, bounding sphere
         for (auto c : wsViewFrustumCorners) {
-            boundingSphere.w = std::max(boundingSphere.w, length(c - boundingSphere.xyz));
+            viewVolumeBoundingSphere.xyz += c;
         }
-        Aabb bounds = {boundingSphere.xyz - float3{boundingSphere.w}, boundingSphere.xyz + float3{boundingSphere.w}};
-
-        std::copy_n(bounds.getCorners().data(), 8,
-                mWsClippedShadowReceiverVolume.data());
-
-        vertexCount = 8;
+        viewVolumeBoundingSphere.xyz *= 1.0f / 8.0f;
+        for (auto c : wsViewFrustumCorners) {
+            viewVolumeBoundingSphere.w = std::max(viewVolumeBoundingSphere.w,
+                    length2(c - viewVolumeBoundingSphere.xyz));
+        }
+        viewVolumeBoundingSphere.w = std::sqrt(viewVolumeBoundingSphere.w);
     }
 
     mHasVisibleShadows = vertexCount >= 2;
@@ -379,7 +372,7 @@ void ShadowMap::computeShadowCameraDirectional(
         // The light's projection, ortho for directional lights, perspective otherwise
         const mat4f Mp = directionalLightFrustum(znear, zfar);
 
-        mat4f MpMv(Mp * Mv);
+        const mat4f MpMv(Mp * Mv);
 
         /*
          * Compute warping (optional, improve quality)
@@ -426,8 +419,12 @@ void ShadowMap::computeShadowCameraDirectional(
         //
         //   In LiPSM mode, we're using the warped space here.
 
-        // disable vectorization here because vertexCount is <= 64, not worth the increased code size.
-        Aabb bounds = compute2DBounds(WLMpMv, mWsClippedShadowReceiverVolume.data(), vertexCount);
+        Aabb bounds;
+        if (params.options.stable) {
+            bounds = compute2DBounds(MpMv, viewVolumeBoundingSphere);
+        } else {
+            bounds = compute2DBounds(WLMpMv, mWsClippedShadowReceiverVolume.data(), vertexCount);
+        }
         lsLightFrustum.min.xy = bounds.min.xy;
         lsLightFrustum.max.xy = bounds.max.xy;
 
@@ -651,6 +648,7 @@ float2 ShadowMap::computeNearFar(const mat4f& lightView,
 Aabb ShadowMap::compute2DBounds(const mat4f& lightView,
         float3 const* wsVertices, size_t count) noexcept {
     Aabb bounds{};
+    // disable vectorization here because vertexCount is <= 64, not worth the increased code size.
     #pragma clang loop vectorize(disable)
     for (size_t i = 0; i < count; ++i) {
         const float3 v = mat4f::project(lightView, wsVertices[i]);
@@ -658,6 +656,15 @@ Aabb ShadowMap::compute2DBounds(const mat4f& lightView,
         bounds.max.xy = max(bounds.max.xy, v.xy);
     }
     return bounds;
+}
+
+Aabb ShadowMap::compute2DBounds(const mat4f& lightView, float4 const& sphere) noexcept {
+    // this assumes a uniform scale + rotation + translate only
+    // TODO: we need to handle perspective projections
+    float4 s;
+    s.xyz = (lightView * float4{sphere.xyz, 1.0f}).xyz;
+    s.w = sphere.w * lightView[0][0];
+    return Aabb{s.xyz - s.w, s.xyz + s.w};
 }
 
 void ShadowMap::intersectWithShadowCasters(
