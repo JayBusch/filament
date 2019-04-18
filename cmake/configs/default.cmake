@@ -1,1 +1,1 @@
-hunter_default_version(filament VERSION 1.1.0)
+hunter_default_version(filament VERSION 1.1.1)
