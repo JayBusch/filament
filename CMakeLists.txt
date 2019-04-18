@@ -9,7 +9,13 @@ cmake_minimum_required(VERSION 3.2)
 include("cmake/HunterGate.cmake")
 HunterGate(
         URL "https://github.com/JayBusch/hunter/archive/master.tar.gz"
-        SHA1 "1a64425471fc55a552de66fa243736084b6366ec"
+        SHA1 "7ba3a0cb2bf2f9d53c176cffe7610c3cf9b201f5"
+)
+include(CMakePackageConfigHelpers)
+write_basic_package_version_file(
+        "${CMAKE_CURRENT_BINARY_DIR}/filamentConfig.cmake"
+        VERSION 1.1.2
+        COMPATIBILITY AnyNewerVersion
 )
 
 # ==================================================================================================
