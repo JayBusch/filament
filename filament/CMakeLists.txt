@@ -330,8 +330,8 @@ target_link_libraries(${TARGET} PRIVATE
 # ==================================================================================================
 include(CMakePackageConfigHelpers)
 write_basic_package_version_file(
-        "lib/${DIST_DIR}/filamentConfig.cmake"
-        VERSION 1.2.1
+        "filamentConfig.cmake"
+        VERSION 1.2.2
         COMPATIBILITY AnyNewerVersion
 )
 
