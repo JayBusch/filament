@@ -337,7 +337,7 @@ install(FILES "README.md" DESTINATION .)
 include(CMakePackageConfigHelpers)
 write_basic_package_version_file(
         "filamentConfig.cmake"
-        VERSION 1.2.2
+        VERSION 1.2.3
         COMPATIBILITY AnyNewerVersion
 )
 install(FILES "filamentConfig.cmake" DESTINATION .)
