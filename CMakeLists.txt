@@ -434,10 +434,4 @@ if (NOT CMAKE_CROSSCOMPILING)
     export(TARGETS matc cmgen filamesh mipgen resgen glslminifier FILE ${IMPORT_EXECUTABLES})
 endif()
 
-include(CMakePackageConfigHelpers)
-write_basic_package_version_file(
-        "${DIST_DIR}/filamentConfig.cmake"
-        VERSION 1.1.3
-        COMPATIBILITY AnyNewerVersion
-)
 

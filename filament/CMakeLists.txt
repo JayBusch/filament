@@ -339,3 +339,11 @@ install(FILES "README.md" DESTINATION .)
 add_subdirectory(backend)
 add_subdirectory(test)
 add_subdirectory(benchmark)
+
+include(CMakePackageConfigHelpers)
+write_basic_package_version_file(
+        "./filamentConfig.cmake"
+        VERSION 1.1.3
+        COMPATIBILITY AnyNewerVersion
+)
+
