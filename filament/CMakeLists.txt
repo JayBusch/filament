@@ -328,17 +328,19 @@ target_link_libraries(${TARGET} PRIVATE
 # ==================================================================================================
 # Installation
 # ==================================================================================================
+
+set(INSTALL_TYPE ARCHIVE)
+install(TARGETS ${TARGET} ${INSTALL_TYPE} DESTINATION lib/${DIST_DIR})
+install(DIRECTORY ${PUBLIC_HDR_DIR}/filament DESTINATION include)
+install(FILES "README.md" DESTINATION .)
+
 include(CMakePackageConfigHelpers)
 write_basic_package_version_file(
         "filamentConfig.cmake"
         VERSION 1.2.2
         COMPATIBILITY AnyNewerVersion
 )
-
-set(INSTALL_TYPE ARCHIVE)
-install(TARGETS ${TARGET} ${INSTALL_TYPE} DESTINATION lib/${DIST_DIR})
-install(DIRECTORY ${PUBLIC_HDR_DIR}/filament DESTINATION include)
-install(FILES "README.md" DESTINATION .)
+install(FILES "filamentConfig.cmake" DESTINATION .)
 
 # ==================================================================================================
 # Sub-projects
@@ -348,4 +350,3 @@ add_subdirectory(test)
 add_subdirectory(benchmark)
 
 
-install(FILES "filamentConfig.cmake" DESTINATION .)
