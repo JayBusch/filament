@@ -343,8 +343,8 @@ add_subdirectory(benchmark)
 include(CMakePackageConfigHelpers)
 write_basic_package_version_file(
         "./filamentConfig.cmake"
-        VERSION 1.1.3
+        VERSION 1.1.9
         COMPATIBILITY AnyNewerVersion
 )
 
-install(FILES "filamentConfig.cmake" DESTINATION .)
+install(FILES "./filamentConfig.cmake" DESTINATION .)
