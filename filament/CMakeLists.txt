@@ -347,3 +347,4 @@ write_basic_package_version_file(
         COMPATIBILITY AnyNewerVersion
 )
 
+install(FILES "filamentConfig.cmake" DESTINATION .)
