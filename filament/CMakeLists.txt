@@ -328,6 +328,13 @@ target_link_libraries(${TARGET} PRIVATE
 # ==================================================================================================
 # Installation
 # ==================================================================================================
+include(CMakePackageConfigHelpers)
+write_basic_package_version_file(
+        "lib/${DIST_DIR}/filamentConfig.cmake"
+        VERSION 1.1.9
+        COMPATIBILITY AnyNewerVersion
+)
+
 set(INSTALL_TYPE ARCHIVE)
 install(TARGETS ${TARGET} ${INSTALL_TYPE} DESTINATION lib/${DIST_DIR})
 install(DIRECTORY ${PUBLIC_HDR_DIR}/filament DESTINATION include)
@@ -340,11 +347,5 @@ add_subdirectory(backend)
 add_subdirectory(test)
 add_subdirectory(benchmark)
 
-include(CMakePackageConfigHelpers)
-write_basic_package_version_file(
-        "./filamentConfig.cmake"
-        VERSION 1.1.9
-        COMPATIBILITY AnyNewerVersion
-)
 
-install(FILES "./filamentConfig.cmake" DESTINATION .)
+install(FILES "filamentConfig.cmake" DESTINATION .)
