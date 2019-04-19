@@ -11,12 +11,7 @@ HunterGate(
         URL "https://github.com/JayBusch/hunter/archive/master.tar.gz"
         SHA1 "7ba3a0cb2bf2f9d53c176cffe7610c3cf9b201f5"
 )
-include(CMakePackageConfigHelpers)
-write_basic_package_version_file(
-        "${CMAKE_CURRENT_BINARY_DIR}/filamentConfig.cmake"
-        VERSION 1.1.3
-        COMPATIBILITY AnyNewerVersion
-)
+
 
 # ==================================================================================================
 # Project declaration
@@ -438,3 +433,11 @@ endif()
 if (NOT CMAKE_CROSSCOMPILING)
     export(TARGETS matc cmgen filamesh mipgen resgen glslminifier FILE ${IMPORT_EXECUTABLES})
 endif()
+
+include(CMakePackageConfigHelpers)
+write_basic_package_version_file(
+        "${FILAMENT}/filamentConfig.cmake"
+        VERSION 1.1.3
+        COMPATIBILITY AnyNewerVersion
+)
+
