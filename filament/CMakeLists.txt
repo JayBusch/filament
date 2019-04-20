@@ -337,10 +337,10 @@ install(FILES "README.md" DESTINATION .)
 include(CMakePackageConfigHelpers)
 write_basic_package_version_file(
         "${CMAKE_CURRENT_SOURCE_DIR}/filamentConfig.cmake"
-        VERSION 1.2.5
+        VERSION 1.2.6
         COMPATIBILITY AnyNewerVersion
 )
-install(FILES "filamentConfig.cmake" DESTINATION .)
+file(COPY "filamentConfig.cmake" DESTINATION .)
 
 # ==================================================================================================
 # Sub-projects
