@@ -335,10 +335,10 @@ install(TARGETS ${TARGET} ${INSTALL_TYPE} DESTINATION lib/${DIST_DIR})
 include(CMakePackageConfigHelpers)
 write_basic_package_version_file(
         "${CMAKE_BINARY_DIR}/filamentConfig.cmake"
-        VERSION 1.3.0
+        VERSION 1.3.1
         COMPATIBILITY AnyNewerVersion
 )
-install(FILES ${CMAKE_CURRENT_BINARY_DIR}/filament/filamentConfig.cmake
+install(FILES ${CMAKE_CURRENT_BINARY_DIR}/filamentConfig.cmake
         DESTINATION .)
 
 install(DIRECTORY ${PUBLIC_HDR_DIR}/filament DESTINATION include)
